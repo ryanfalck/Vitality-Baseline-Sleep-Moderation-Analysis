@@ -1,0 +1,609 @@
+---
+title: "Differences in the effects of exercise on cognition based on sleep quality in people with chronic stroke"
+author: "RSF"
+date: "2024-09-30"
+output: 
+  html_document:
+    toc: true
+    theme: united
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+# 1) Data set-up and management
+
+Load Packages
+```{r}
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(readxl, plyr, lme4,nlme, robustlmm, car, broom, lsmeans, ggplot2, psych, HLMdiag, tableone,mice,mediation)
+```
+
+Load Data
+```{r}
+setwd("~/Desktop/Manuscripts/Ongoing Projects/Vitality PA and Sleep")#Directory where you put the spreadsheet
+Vitality <- read_excel("VITALITY_MASTER_FINAL_SLEEP_September12,2024.xlsx")
+```
+
+Clean data for analysis
+```{r}
+spaceless <- function(x) {colnames(x) <- gsub(" ", "_", colnames(x));x}
+data1<-spaceless(Vitality)
+data2<-data1[c(1:7,9:25,27,29,31,35:37,44,45,50,51,53:56,63,64:72,74,75,76,78:99)]
+library(dplyr)
+data3<-rename(data2, c("ID"="Participant_ID", "Time"="Timepoint", "Type_of_stroke"="Type_of_stroke_(first_stroke)", "Hemisphere_affected"="Hemisphere_affected_(first_stroke)", 
+                       "Location_of_stroke"="Location_of_stroke_(first_stroke)","DSF"="Digit_Span_Forward_Total_Correct", "DSB"="Digit_Span_Backward_Total_Correct",
+                       "Trails_A"="Trail_Making_A_time_to_complete", "Trails_B"="Trail_Making_B_time_to_complete", "Trails_B_A"="Trail_Making_Test_Score_(B-A)",
+                       "WHR"="Waist_to_Hip_Ratio", "ABC_Score"="Average_ABC_Score", "FCI_Total"="FCI_Item_Total", "Total_IADL"="Total_IADL_Score", "SPPB_Score"="NIA_Total_Score",
+                       "RH_Grip_Status"="Unable_to_test_Right_Hand_Strength", "RH_Grip_Strength"="Right_Hand_Mean_Kg", "LH_Grip_Status"="Unable_to_test_Left_Hand_Strength",
+                       "LH_Grip_Strength"="Left_Hand_Mean_Kg","RQ_Ext_Status"="Unable_to_test_Right_Quad_Strength","RQ_Ext_Strength"="Mean_Right_Quad_Strength",
+                       "LQ_Ext_Status"="Unable_to_test_Left_Quad_Strength","LQ_Ext_Strength"="Mean_Left_Quad_Strength"))
+detach("package:dplyr", unload = TRUE)
+
+#Education
+data3$EDU<-NULL
+data3$EDU[data3$Education==1]<- "High School or Less"
+data3$EDU[data3$Education==2]<- "High School or Less"
+data3$EDU[data3$Education==3]<- "High School or Less"
+data3$EDU[data3$Education==4]<- "Trade School or Some College"
+data3$EDU[data3$Education==5]<- "Trade School or Some College"
+data3$EDU[data3$Education==6]<- "University Degree or Higher"
+
+#Grip Strength
+data3$RH_Grip_Status[data3$RH_Grip_Status=="Unable to Test Right Hand Strength"]<- 0
+data3$RH_Grip_Status[is.na(data3$RH_Grip_Status)]<- 1
+data3$LH_Grip_Status[data3$LH_Grip_Status=="Unable to Test Left Hand Strength"]<- 0
+data3$LH_Grip_Status[is.na(data3$LH_Grip_Status)]<- 1
+
+data3$Avg_Grip_Strength<-NA
+data3$Avg_Grip_Strength[data3$RH_Grip_Status==0 & data3$LH_Grip_Status==1]<-data3$LH_Grip_Strength
+data3$Avg_Grip_Strength[data3$RH_Grip_Status==1 & data3$LH_Grip_Status==0]<-data3$RH_Grip_Strength
+data3$Avg_Grip_Strength[data3$RH_Grip_Status==1 & data3$LH_Grip_Status==1]<-(data3$RH_Grip_Strength + data3$LH_Grip_Strength)/2
+
+
+#Quad Strength
+data3$RQ_Ext_Status[is.na(data3$RQ_Ext_Status)]<- 1
+data3$RQ_Ext_Status[data3$RQ_Ext_Status!=1]<-0
+data3$LQ_Ext_Status[is.na(data3$LQ_Ext_Status)]<- 1
+data3$LQ_Ext_Status[data3$RQ_Ext_Status!=1]<-0
+
+data3$Avg_Quad_Strength<-NA
+data3$Avg_Quad_Strength[data3$RQ_Ext_Status==0 & data3$LQ_Ext_Status==1]<-data3$LQ_Ext_Strength
+data3$Avg_Quad_Strength[data3$RQ_Ext_Status==1 & data3$LQ_Ext_Status==0]<-data3$RQ_Ext_Strength
+data3$Avg_Quad_Strength[data3$RQ_Ext_Status==1 & data3$LQ_Ext_Status==1]<-(data3$LQ_Ext_Strength + data3$RQ_Ext_Strength)/2
+
+
+#Stroop Interference Scoring
+data3$Stroop_INT_Ratio<- (data3$Median.inc.RT - data3$Median.con.RT)/data3$Median.neut.RT
+data3$Stroop_INT_Diff<- data3$Median.inc.RT - data3$Median.con.RT
+data3$Stroop_IIV<- data1$SD.inc.RT - data1$SD.con.RT
+
+#Digit Span Forward-Backward
+data3$DSFB<- data3$DSF - data3$DSB
+
+#Gait Speed
+data3$GaitSpeed<- 4/data1$NIA_Walking_Time_in_seconds
+
+#walking Aid Use
+data1$Aid<- NA
+data3$Aid[data1$Walking_Aid=="None" & data1$Timepoint == 1]<-0
+data3$Aid[data1$Walking_Aid=="AFO on left" & data1$Timepoint == 1]<-1
+data3$Aid[data1$Walking_Aid=="AFO on left, and needs transfer belt" & data1$Timepoint == 1]<-1
+data3$Aid[data1$Walking_Aid=="arm resst used" & data1$Timepoint == 1]<-1
+data3$Aid[data1$Walking_Aid=="Brace" & data1$Timepoint == 1]<-1
+data3$Aid[data1$Walking_Aid=="Cane" & data1$Timepoint == 1]<-1
+data3$Aid[data1$Walking_Aid=="Cane\r\nBrace" & data1$Timepoint == 1]<-1
+data3$Aid[data1$Walking_Aid=="Cane\r\nBrace (R-leg brace)\r\nBrace" & data1$Timepoint == 1]<-1
+data3$Aid[data1$Walking_Aid=="Cane\r\nBrace\r\nNeurostep implant in leg" & data1$Timepoint == 1]<-1
+data3$Aid[data1$Walking_Aid=="Cane\r\nBrace\r\nUsed armrests" & data1$Timepoint == 1]<-1
+data3$Aid[data1$Walking_Aid=="Cane\r\nHand push off chair" & data1$Timepoint == 1]<-1
+data3$Aid[data1$Walking_Aid=="Cane\r\nHand push off from chair" & data1$Timepoint == 1]<-1
+data3$Aid[data1$Walking_Aid=="Cane\r\nHand push off of chair" & data1$Timepoint == 1]<-1
+data3$Aid[data1$Walking_Aid=="Cane\r\nHands push off chair" & data1$Timepoint == 1]<-1
+data3$Aid[data1$Walking_Aid=="Nordic Poles" & data1$Timepoint == 1]<-1
+data3$Aid[data1$Walking_Aid=="support belt for back" & data1$Timepoint == 1]<-1
+data3$Aid[data1$Walking_Aid=="Walker" & data1$Timepoint == 1]<-1
+data3$Aid[data1$Walking_Aid=="Walker Cane combination" & data1$Timepoint == 1]<-1
+data3$Aid[data1$Walking_Aid=="walking pole (only one) - left side" & data1$Timepoint == 1]<-1
+data3$Aid[data1$Walking_Aid=="walking poles" & data1$Timepoint == 1]<-1
+data3$Aid[data1$Walking_Aid=="Walking poles" & data1$Timepoint == 1]<-1
+
+#PSQI Duration
+data3$PSQI_Duration<-as.numeric(data3$PSQI_Duration)
+
+#Remove ID VIT_083
+data4<-subset(data3, ID!="VIT_083")
+
+data4$OSA<-as.character(data4$OSA)
+```
+
+Determine participants with missing sleep data at baseline for PSQI(N=0), MW Duration (N=11), and MW Efficiency (N=11)
+```{r}
+#Exclude Participants without Sleep Data at Baseline
+library(dplyr)
+Sleep_data_1 <- data4 %>% 
+  group_by(ID) %>%
+  mutate(Missing_PSQI = as.factor(ifelse(Time==1 & !is.na(PSQI),1,0)),
+         Missing_Duration = as.factor(ifelse(Time==1 & !is.na(MW_Duration),1,0)),
+         Missing_Efficiency = as.factor(ifelse(Time==1 & !is.na(MW_Efficiency),1,0))
+         )
+baseline_missing<-subset(Sleep_data_1, Time==1)
+
+#Missing PSQI
+table(baseline_missing$Missing_PSQI)
+#Missing MW Duration
+table(baseline_missing$Missing_Duration)
+#Missing MW Efficiency
+table(baseline_missing$Missing_Efficiency)
+```
+
+
+Group participants into "good sleepers" and "bad sleepers"
+```{r}
+Sleep_data_2<-data4 %>%
+  group_by(ID) %>%
+  mutate(Good_Sleep_Quality = as.factor(ifelse(Time==1 & PSQI<=5,1,0)),
+         Good_Subjective_Sleep_Duration = as.factor(ifelse(Time==1 & PSQI_Duration>=420 & PSQI_Duration<=490,1,0)),
+         Good_Sleep_Duration = as.factor(ifelse(Time==1 & MW_Duration>=420 & MW_Duration<=490,1,0)),
+         Good_Sleep_Efficiency = as.factor(ifelse(Time==1 & MW_Efficiency>=85,1,0))
+         )
+```
+
+# 3) Baseline Participant Characteristics by group and sleep
+
+```{r}
+Baseline<-subset(Sleep_data_2, Time==1)
+GoodSleep<-subset(Baseline, Good_Sleep_Quality==1)
+BadSleep<-subset(Baseline, Good_Sleep_Quality==0)
+GoodSubjectiveSleepDur<-subset(Baseline,Good_Subjective_Sleep_Duration==1)
+BadSubjectiveSleepDur<-subset(Baseline,Good_Subjective_Sleep_Duration==0)
+GoodSleepDur<-subset(Baseline, Good_Sleep_Duration==1)
+BadSleepDur<-subset(Baseline, Good_Sleep_Duration==0)
+GoodSleepEff<-subset(Baseline, Good_Sleep_Efficiency==1)
+BadSleepEff<-subset(Baseline, Good_Sleep_Efficiency==0)
+
+vars<-dput(names(Baseline[c(31,32,34,74,4,6,7,36,37,23,24,55,54,72,14,71,77,39,81,61,73,56,57,62)]))
+```
+
+## 3.1) All participants
+```{r}
+Table1_Full<-CreateTableOne(vars=vars, data=Baseline)
+print(Table1_Full,contDigits=2,missing=TRUE,quote=TRUE)
+```
+
+## 3.2) All participants stratified by group
+```{r}
+Table1_Full<-CreateTableOne(vars=vars, strata = "Group", data=Baseline)
+print(Table1_Full,contDigits=2,missing=TRUE,quote=TRUE)
+```
+
+## 3.3) Participants categorized by subjective sleep quality 
+(i.e., Good subjective sleep PSQI ≤ 5)
+```{r}
+Supp_Table1a<-CreateTableOne(vars=vars, strata = "Group", data=GoodSleep)
+print(Supp_Table1a,contDigits=2,missing=TRUE,quote=TRUE)
+
+Supp_Table1b<-CreateTableOne(vars=vars, strata = "Group", data=BadSleep)
+print(Supp_Table1b,contDigits=2,missing=TRUE,quote=TRUE)
+```
+
+## 3.4) Participants categorized by subjective sleep duration 
+(i.e., Good subjective sleep PSQI sleep duration 420-490 minutes/night)
+```{r}
+Supp_Table2a<-CreateTableOne(vars=vars, strata = "Group", data=GoodSubjectiveSleepDur)
+print(Supp_Table2a,contDigits=2,missing=TRUE,quote=TRUE)
+
+Supp_Table2b<-CreateTableOne(vars=vars, strata = "Group", data=BadSubjectiveSleepDur)
+print(Supp_Table2b,contDigits=2,missing=TRUE,quote=TRUE)
+```
+
+## 3.5) Participants categorized by sleep duration 
+(i.e., Good sleep duration 420-490 minutes/night)
+```{r}
+Supp_Table3a<-CreateTableOne(vars=vars, strata = "Group", data=GoodSleepDur)
+print(Supp_Table3a,contDigits=2,missing=TRUE,quote=TRUE)
+
+Supp_Table3b<-CreateTableOne(vars=vars, strat = "Group", data=BadSleepDur)
+print(Supp_Table3b,contDigits=2,missing=TRUE,quote=TRUE)
+```
+
+## 3.6) Participants categorized by sleep efficiency 
+(i.e., Good sleep efficiency ≥ 85%/night)
+```{r}
+Supp_Table4a<-CreateTableOne(vars=vars, strata = "Group", data=GoodSleepEff)
+print(Supp_Table4a,contDigits=2,missing=TRUE,quote=TRUE)
+
+Supp_Table4b<-CreateTableOne(vars=vars, strat = "Group", data=BadSleepEff)
+print(Supp_Table4b,contDigits=2,missing=TRUE,quote=TRUE)
+```
+
+# 4) Primary Linear Mixed Model 
+
+Note: This model is similar to that of the primary model from Liu-Ambrose et al., 2022. The primary difference is that the time points included are baseline, three months and six months, rather than baseline, six months and 12 months. This is done because sleep was onl
+
+Prepare data for linear mixed model
+```{r}
+data5<-Sleep_data_2[c(1:3,83:86,31,32,34,74,4,6,7,36,37,23,24,55,54,62,72,14,71,77,56,57,61)]
+
+library(dplyr)
+data5 <-rename(data5, ADAS_COG_TOTAL = ADAS_COG_11)
+
+varying<-data5[c(1:2,23:28:length(data5))]
+baseline<-subset(data5[-c(23:28:length(data5))], Time==1)
+
+varying.1 <- subset(varying,Time==1)
+varying.2 <- subset(varying,Time==3)
+varying.3 <- subset(varying,Time==4)
+
+colnames(varying.1) <- paste(colnames(varying.1),"1",sep=".")
+colnames(varying.2) <- paste(colnames(varying.2),"2",sep=".")
+colnames(varying.3) <- paste(colnames(varying.3),"3",sep=".")
+
+wide.data <- left_join(baseline,varying.1,by=c("ID"="ID.1")) %>% 
+  left_join(.,varying.2,by=c("ID"="ID.2")) %>% 
+  left_join(.,varying.3,by=c("ID"="ID.3"))
+detach("package:dplyr", unload = TRUE)
+
+Timevars <- grep("Time",colnames(wide.data),value=TRUE)
+wide.data <- wide.data[,!(colnames(wide.data)%in%Timevars)]
+
+colnames(wide.data) <- (gsub("_","",colnames(wide.data)))
+colnames(wide.data) <- (gsub(".1","baseline",colnames(wide.data)))
+
+data7 <- reshape(as.data.frame(wide.data),idvar="ID",varying=28:39,direction="long",sep=".") #reshape to long data frame with T2 and T3 repeated outcome and baseline as separate time-invariant
+
+data7$Sex<- ifelse(data7$Gender=="Male",1,0)
+
+data7$Group.1<-NA
+data7$Group.1[data7$Group=="COG"]<-1
+data7$Group.1[data7$Group=="BAT"]<-0
+data7$Group.1[data7$Group=="EX"]<-2
+
+#LMM function for comparing Exercise versus Control and Cognitive versus Control (USED FOR JAMA PAPER)
+lmm.ex.mdl<- function(y,cov1,cov2,cov3){
+  model <- lmer(as.formula(paste0(y, "~factor(Group.1)*factor(time) +", cov1, "+", cov2, "+", cov3, "+ (1|ID)")), data= data7)
+  modelsummary <- summary(model)
+  means.1 <- lsmeans(model, ~Group.1|time)
+  contrasts <- contrast(means.1, "trt.vs.ctrl", adj="dunnet")
+  conf.95<-confint(contrasts, parm, level = 0.95)
+  return(list(summary=modelsummary, lsmeans=means.1, group_contrasts=contrasts, contrasts_ci.95=conf.95))
+}
+
+emm_options(opt.digits = FALSE)
+```
+
+## 4.1) Primary Analysis: ADAS-Cog Plus
+```{r}
+lmm.ex.mdl("ADASCOGPLUS", "ADASCOGPLUSbaseline", "MMSE", "FMTotalScore")#PRIMARY OUTCOME:ADAS-COG Plus
+```
+
+## 4.2) Secondary Outcome: ADAS-Cog 13
+```{r}
+lmm.ex.mdl("ADASCOGTOTAL", "ADASCOGTOTALbaseline", "MMSE", "FMTotalScore")#SECONDARY OUTCOME: ADAS-Cog 13
+```
+
+
+## 4.3) Secondary Outcome: Stroop Interference Ratio
+```{r}
+lmm.ex.mdl("StroopINTRatio", "StroopINTRatiobaseline", "MMSE", "FMTotalScore")#SECONDARY OUTCOME: Stroop Interference Ratio
+```
+
+
+# 5) Linear mixed model for comparing outcomes based on subjective sleep quality (Good sleep quality PSQI ≤ 5)
+
+Post-hoc contrast statements
+```{r}
+#EX vs. BAT Differences at 6 months between Good vs. Poor Sleepers
+c1=matrix(c(1,0,0,-1,0,0,0,0,0,0,0,0))
+c2=matrix(c(0,0,1,0,0,-1,0,0,0,0,0,0))
+c1st=c1 - c2
+
+#ENRICH vs. BAT Differences at 6 months between Good vs. Poor Sleepers
+c3=matrix(c(1,0,0,-1,0,0,0,0,0,0,0,0))
+c4=matrix(c(0,1,0,0,-1,0,0,0,0,0,0,0))
+c2nd=c3 - c4
+
+#EX vs. BAT Differences at 12 months between Good vs. Poor Sleepers
+c5=matrix(c(0,0,0,0,0,0,1,0,0,-1,0,0))
+c6=matrix(c(0,0,0,0,0,0,0,0,1,0,0,-1))
+c3rd=c5 - c6
+
+#ENRICH vs. BAT Differences at 12 months between Good vs. Poor Sleepers
+c7=matrix(c(0,0,0,0,0,0,1,0,0,-1,0,0))
+c8=matrix(c(0,0,0,0,0,0,0,1,0,0,-1,0))
+c4th=c7 - c8
+```
+
+Model
+```{r}
+lmm.ex2.mdl<- function(y,cov1,cov2,cov3,cov4){
+  model <- lmer(as.formula(paste0(y, "~factor(Group.1)*factor(time)*factor(GoodSleepQuality)","+", cov1, "+", cov2, "+", cov3, "+", cov4, "+ (1|ID)")), data= data7)
+  modelsummary <- summary(model)
+  means.1 <- lsmeans(model, ~Group.1|GoodSleepQuality|time)
+  contrasts <- contrast(means.1, "trt.vs.ctrl", adj="dunnet")
+  conf.95<-confint(contrasts, parm, level = 0.95)
+  post.hoc<-contrast(means.1,list(c1st,c2nd,c3rd,c4th),by=NULL)
+  post.hoc.conf.95<-confint(post.hoc, parm, level = 0.95)
+  return(list(summary=modelsummary, lsmeans=means.1, group_contrasts=contrasts, contrasts_ci.95=conf.95, post_hoc_contrasts = post.hoc, 
+              post_hoc_95_ci = post.hoc.conf.95))
+}
+```
+
+## 5.1) Primary Analysis: ADAS-Cog Plus
+```{r}
+lmm.ex2.mdl("ADASCOGPLUS","ADASCOGPLUSbaseline","MMSE", "FMTotalScore", "OSA")#PRIMARY OUTCOME:ADAS-COG Plus
+```
+
+## 5.2) Secondary Outcome: ADAS-Cog 13
+```{r}
+lmm.ex2.mdl("ADASCOGTOTAL", "ADASCOGTOTALbaseline", "MMSE", "FMTotalScore", "OSA")#SECONDARY OUTCOME: ADAS-Cog 13
+```
+
+## 5.3) Secondary Outcome: Stroop Interference Ratio
+```{r}
+lmm.ex2.mdl("StroopINTRatio", "StroopINTRatiobaseline", "MMSE", "FMTotalScore", "OSA")#SECONDARY OUTCOME: Stroop Interference Ratio
+```
+
+# 6) Linear mixed model for comparing outcomes based on objective sleep duration (Good sleep duration = 420-490 minutes/night)
+
+Model
+```{r}
+lmm.ex3.mdl<- function(y,cov1,cov2,cov3,cov4){
+  model <- lmer(as.formula(paste0(y, "~factor(Group.1)*factor(time)*factor(GoodSleepDuration)","+", cov1, "+", cov2, "+", cov3, "+", cov4, "+ (1|ID)")),  data= data7)
+  modelsummary <- summary(model)
+  means.1 <- lsmeans(model, ~Group.1|GoodSleepDuration|time)
+  contrasts <- contrast(means.1, "trt.vs.ctrl", adj="dunnet")
+  conf.95<-confint(contrasts, parm, level = 0.95)
+  post.hoc<-contrast(means.1,list(c1st,c2nd,c3rd,c4th),by=NULL)
+  post.hoc.conf.95<-confint(post.hoc, parm, level = 0.95)
+  return(list(summary=modelsummary, lsmeans=means.1, group_contrasts=contrasts, contrasts_ci.95=conf.95, post_hoc_contrasts = post.hoc, 
+              post_hoc_95_ci = post.hoc.conf.95))
+}
+```
+
+## 6.1) Primary Analysis: ADAS-Cog Plus
+```{r}
+lmm.ex3.mdl("ADASCOGPLUS","ADASCOGPLUSbaseline","MMSE", "FMTotalScore","OSA")#PRIMARY OUTCOME:ADAS-COG Plus
+```
+
+## 6.2) Secondary Outcome: ADAS-Cog 13
+```{r}
+lmm.ex3.mdl("ADASCOGTOTAL", "ADASCOGTOTALbaseline", "MMSE", "FMTotalScore","OSA")#SECONDARY OUTCOME: ADAS-Cog 13 
+```
+
+## 6.3) Secondary Outcome: Stroop Interference Ratio
+```{r}
+lmm.ex3.mdl("StroopINTRatio", "StroopINTRatiobaseline", "MMSE", "FMTotalScore", "OSA")#SECONDARY OUTCOME: Stroop Interference Ratio
+```
+
+# 7) Linear mixed model for comparing outcomes based on objective sleep efficiency (Good sleep efficiency ≥ 85%/night)
+
+Model
+```{r}
+lmm.ex4.mdl<- function(y,cov1,cov2,cov3,cov4){
+  model <- lmer(as.formula(paste0(y, "~factor(Group.1)*factor(time)*factor(GoodSleepEfficiency)","+", cov1, "+", cov2, "+", cov3, "+", cov4, "+ (1|ID)")), data= data7)
+  modelsummary <- summary(model)
+  means.1 <- lsmeans(model, ~Group.1|GoodSleepEfficiency|time)
+  contrasts <- contrast(means.1, "trt.vs.ctrl", adj="dunnet")
+  conf.95<-confint(contrasts, parm, level = 0.95)
+  post.hoc<-contrast(means.1,list(c1st,c2nd,c3rd,c4th),by=NULL)
+  post.hoc.conf.95<-confint(post.hoc, parm, level = 0.95)
+  return(list(summary=modelsummary, lsmeans=means.1, group_contrasts=contrasts, contrasts_ci.95=conf.95, post_hoc_contrasts = post.hoc, 
+              post_hoc_95_ci = post.hoc.conf.95))
+}
+```
+
+## 7.1) Primary Analysis: ADAS-Cog Plus
+```{r}
+lmm.ex4.mdl("ADASCOGPLUS","ADASCOGPLUSbaseline","MMSE", "FMTotalScore","OSA")#PRIMARY OUTCOME:ADAS-COG Plus
+```
+
+## 7.2) Secondary Outcome: ADAS-Cog 13
+```{r}
+lmm.ex4.mdl("ADASCOGTOTAL", "ADASCOGTOTALbaseline", "MMSE", "FMTotalScore","OSA")#SECONDARY OUTCOME: ADAS-Cog 13
+```
+
+## 7.3) Secondary Outcome: Stroop Interference Ratio
+```{r}
+lmm.ex4.mdl("StroopINTRatio", "StroopINTRatiobaseline", "MMSE", "FMTotalScore", "OSA")#SECONDARY OUTCOME: Stroop Interference Ratio
+```
+
+
+# 8) Additional Reviewer requested analyses not included in the manuscript 
+
+## 8.1) CHAMPS PA Data
+
+Describe data at baseline
+```{r}
+describe(Baseline$CHAMPS_kcal)
+```
+
+Describe by group
+```{r}
+describeBy(Baseline$CHAMPS_kcal, Baseline$Group)
+```
+
+## 8.1.1) Results for subjective sleep quality including CHAMPS PA as a covariate
+
+Model
+```{r}
+lmm.supp1.mdl<- function(y,cov1,cov2,cov3,cov4,cov5){
+  model <- lmer(as.formula(paste0(y, "~factor(Group.1)*factor(time)*factor(GoodSleepQuality)","+", cov1, "+", cov2, "+", cov3, "+", cov4, "+", cov5, "+ (1|ID)")), data= data7)
+  modelsummary <- summary(model)
+  means.1 <- lsmeans(model, ~Group.1|GoodSleepQuality|time)
+  contrasts <- contrast(means.1, "trt.vs.ctrl", adj="dunnet")
+  conf.95<-confint(contrasts, parm, level = 0.95)
+  return(list(summary=modelsummary, lsmeans=means.1, group_contrasts=contrasts, contrasts_ci.95=conf.95))
+}
+```
+
+ADAS-Cog Plus
+```{r}
+lmm.supp1.mdl("ADASCOGPLUS","ADASCOGPLUSbaseline","MMSE", "FMTotalScore","OSA", "CHAMPSkcal")#PRIMARY OUTCOME:ADAS-COG Plus
+```
+
+ADAS-Cog 13
+```{r}
+lmm.supp1.mdl("ADASCOGTOTAL", "ADASCOGTOTALbaseline", "MMSE", "FMTotalScore","OSA", "CHAMPSkcal")#SECONDARY OUTCOME: ADAS-Cog 13
+```
+
+Stroop Interference Ratio
+```{r}
+lmm.supp1.mdl("StroopINTRatio", "StroopINTRatiobaseline", "MMSE", "FMTotalScore", "OSA", "CHAMPSkcal")#SECONDARY OUTCOME: Stroop Interference Ratio
+```
+
+
+## 8.1.2) Results for objective sleep efficiency including CHAMPS PA as a covariate
+
+Model
+```{r}
+lmm.supp2.mdl<- function(y,cov1,cov2,cov3,cov4,cov5){
+  model <- lmer(as.formula(paste0(y, "~factor(Group.1)*factor(time)*factor(GoodSleepEfficiency)","+", cov1, "+", cov2, "+", cov3, "+", cov4, "+", cov5, "+ (1|ID)")), data= data7)
+  modelsummary <- summary(model)
+  means.1 <- lsmeans(model, ~Group.1|GoodSleepEfficiency|time)
+  contrasts <- contrast(means.1, "trt.vs.ctrl", adj="dunnet")
+  conf.95<-confint(contrasts, parm, level = 0.95)
+  return(list(summary=modelsummary, lsmeans=means.1, group_contrasts=contrasts, contrasts_ci.95=conf.95))
+}
+```
+
+ADAS-Cog Plus
+```{r}
+lmm.supp2.mdl("ADASCOGPLUS","ADASCOGPLUSbaseline","MMSE", "FMTotalScore","OSA", "CHAMPSkcal")#PRIMARY OUTCOME:ADAS-COG Plus
+```
+
+ADAS-Cog 13
+```{r}
+lmm.supp2.mdl("ADASCOGTOTAL", "ADASCOGTOTALbaseline", "MMSE", "FMTotalScore","OSA", "CHAMPSkcal")#SECONDARY OUTCOME: ADAS-Cog 13
+```
+
+Stroop Interference Ratio
+```{r}
+lmm.supp2.mdl("StroopINTRatio", "StroopINTRatiobaseline", "MMSE", "FMTotalScore", "OSA", "CHAMPSkcal")#SECONDARY OUTCOME: Stroop Interference Ratio
+```
+
+
+## 8.1.3) Results for objective sleep duration including CHAMPS PA as a covariate
+
+Model
+```{r}
+lmm.supp3.mdl<- function(y,cov1,cov2,cov3,cov4,cov5){
+  model <- lmer(as.formula(paste0(y, "~factor(Group.1)*factor(time)*factor(GoodSleepDuration)","+", cov1, "+", cov2, "+", cov3, "+", cov4, "+", cov5, "+ (1|ID)")), data= data7)
+  modelsummary <- summary(model)
+  means.1 <- lsmeans(model, ~Group.1|GoodSleepDuration|time)
+  contrasts <- contrast(means.1, "trt.vs.ctrl", adj="dunnet")
+  conf.95<-confint(contrasts, parm, level = 0.95)
+  return(list(summary=modelsummary, lsmeans=means.1, group_contrasts=contrasts, contrasts_ci.95=conf.95))
+}
+```
+
+ADAS-Cog Plus
+```{r}
+lmm.supp3.mdl("ADASCOGPLUS","ADASCOGPLUSbaseline","MMSE", "FMTotalScore","OSA", "CHAMPSkcal")#PRIMARY OUTCOME:ADAS-COG Plus
+```
+
+ADAS-Cog 13
+```{r}
+lmm.supp3.mdl("ADASCOGTOTAL", "ADASCOGTOTALbaseline", "MMSE", "FMTotalScore","OSA", "CHAMPSkcal")#SECONDARY OUTCOME: ADAS-Cog 13
+```
+
+Stroop Interference Ratio
+```{r}
+lmm.supp3.mdl("StroopINTRatio", "StroopINTRatiobaseline", "MMSE", "FMTotalScore", "OSA", "CHAMPSkcal")#SECONDARY OUTCOME: Stroop Interference Ratio
+```
+
+
+## 8.2) Linear mixed model for comparing outcomes based on subjective sleep duration (Good sleep duration = 420-490 minutes/night)
+
+Participants classified as having good vs. poor subjective sleep duration (i.e.., good sleep duration = 420-490 min/night)
+```{r}
+table(Baseline$Good_Subjective_Sleep_Duration, Baseline$Group)
+```
+
+Model
+```{r}
+lmm.supp4.mdl<- function(y,cov1,cov2,cov3,cov4){
+  model <- lmer(as.formula(paste0(y, "~factor(Group.1)*factor(time)*factor(GoodSubjectiveSleepDuration)","+", cov1, "+", cov2, "+", cov3, "+", cov4, "+ (1|ID)")), data= data7)
+  modelsummary <- summary(model)
+  means.1 <- lsmeans(model, ~Group.1|GoodSubjectiveSleepDuration|time)
+  contrasts <- contrast(means.1, "trt.vs.ctrl", adj="dunnet")
+  conf.95<-confint(contrasts, parm, level = 0.95)
+  return(list(summary=modelsummary, lsmeans=means.1, group_contrasts=contrasts, contrasts_ci.95=conf.95))
+}
+```
+
+### 8.2.1) Primary Analysis: ADAS-Cog Plus
+```{r}
+lmm.supp4.mdl("ADASCOGPLUS","ADASCOGPLUSbaseline","MMSE", "FMTotalScore","OSA")#PRIMARY OUTCOME:ADAS-COG Plus
+```
+
+### 8.2.2) Secondary Outcome: ADAS-Cog 13
+```{r}
+lmm.supp4.mdl("ADASCOGTOTAL", "ADASCOGTOTALbaseline", "MMSE", "FMTotalScore","OSA")#SECONDARY OUTCOME: ADAS-Cog 13
+```
+
+### 8.2.3) Secondary Outcome: Stroop Interference Ratio
+```{r}
+lmm.supp4.mdl("StroopINTRatio", "StroopINTRatiobaseline", "MMSE", "FMTotalScore", "OSA")#SECONDARY OUTCOME: Stroop Interference Ratio
+```
+
+
+## 8.3) Linear mixed model for effects of interventions on sleep outcomes
+
+Model Set-up
+```{r}
+varying.2A <- subset(varying,Time==2)
+varying.3A <- subset(varying,Time==3)
+
+colnames(varying.2A) <- paste(colnames(varying.2A),"2",sep=".")
+colnames(varying.3A) <- paste(colnames(varying.3A),"3",sep=".")
+
+library(dplyr)
+wide.data2 <- left_join(baseline,varying.1,by=c("ID"="ID.1")) %>% 
+  left_join(.,varying.2A,by=c("ID"="ID.2")) %>% 
+  left_join(.,varying.3A,by=c("ID"="ID.3"))
+detach("package:dplyr", unload = TRUE)
+
+Timevars2 <- grep("Time",colnames(wide.data2),value=TRUE)
+wide.data2 <- wide.data2[,!(colnames(wide.data2)%in%Timevars2)]
+
+colnames(wide.data2) <- (gsub("_","",colnames(wide.data2)))
+colnames(wide.data2) <- (gsub(".1","baseline",colnames(wide.data2)))
+
+data8 <- reshape(as.data.frame(wide.data2),idvar="ID",varying=28:39,direction="long",sep=".") #reshape to long data frame with T2 and T3 repeated outcome and baseline as separate time-invariant
+
+data8$Sex<- ifelse(data8$Gender=="Male",1,0)
+
+data8$Group.1<-NA
+data8$Group.1[data8$Group=="COG"]<-1
+data8$Group.1[data8$Group=="BAT"]<-0
+data8$Group.1[data8$Group=="EX"]<-2
+
+
+lmm.supp5.mdl<- function(y,cov1, cov2, cov3, cov4){
+  model <- lmer(as.formula(paste0(y, "~factor(Group.1)*factor(time)","+", cov1, "+", cov2, "+", cov3, "+", cov4, "+ (1|ID)")), data= data8)
+  modelsummary <- summary(model)
+  means.1 <- lsmeans(model, ~Group.1|time)
+  contrasts <- contrast(means.1, "trt.vs.ctrl", adj="dunnet")
+  conf.95<-confint(contrasts, parm, level = 0.95)
+  return(list(summary=modelsummary, lsmeans=means.1, group_contrasts=contrasts, contrasts_ci.95=conf.95))
+}
+```
+
+Sleep Efficiency
+```{r}
+lmm.supp5.mdl("MWEfficiency", "MWEfficiencybaseline", "MMSE", "FMTotalScore", "OSA")#Sleep Efficiency
+```
+
+Sleep Duration
+```{r}
+lmm.supp5.mdl("MWDuration", "MWDurationbaseline", "MMSE", "FMTotalScore", "OSA")#Sleep Efficiency
+```
+
+PSQI
+```{r}
+lmm.supp5.mdl("PSQI", "PSQIbaseline", "MMSE", "FMTotalScore", "OSA")#Sleep Efficiency
+```
